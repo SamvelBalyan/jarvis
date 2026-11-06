@@ -170,7 +170,7 @@ class WakeService : Service() {
         if (overlay.isShowing) {
             overlay.setText(heard ?: result, if (heard != null) result else null)
             overlay.pulse()
-            scheduleFinish(2600)
+            scheduleFinish(if (msg.contains("🤖")) 8000 else 2600)
         }
         if (msg.contains("⚠")) errorSeen = true
     }

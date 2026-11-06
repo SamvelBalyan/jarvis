@@ -15,7 +15,10 @@ import java.util.TimeZone
  * The API key is typed in Settings and only ever stored on this phone.
  */
 object Ai {
-    class AiException(message: String) : Exception(message)
+    open class AiException(message: String) : Exception(message)
+
+    /** This model is busy, slow or missing: worth trying another one. */
+    class Retryable(message: String) : AiException(message)
 
     data class Result(val commands: List<String>, val reply: String)
 
@@ -112,9 +115,30 @@ Never invent other command forms. Several commands may be combined when the user
 
     /** Blocking network call: run it off the main thread. */
     fun interpret(said: String): Result {
+        if (Store.str("aikey").isEmpty()) throw AiException("Add your free AI key in Settings → AI")
+        val chosen = Store.str("aimodel", "gemini-flash-latest")
+        val candidates = ArrayList<String>()
+        lastGood?.let { candidates.add(it) }
+        candidates.add(chosen)
+        candidates.addAll(listOf("gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"))
+        var last: Retryable? = null
+        for (m in candidates.distinct()) {
+            try {
+                val r = interpretWith(said, m)
+                lastGood = m
+                return r
+            } catch (e: Retryable) {
+                last = e
+                if (lastGood == m) lastGood = null
+            }
+        }
+        throw AiException("The AI is busy right now (${last?.message}). Try again in a moment.")
+    }
+
+    private var lastGood: String? = null
+
+    private fun interpretWith(said: String, model: String): Result {
         val key = Store.str("aikey")
-        if (key.isEmpty()) throw AiException("Add your free AI key in Settings → AI")
-        val model = Store.str("aimodel", "gemini-flash-latest")
 
         val contents = JSONArray()
         for ((u, m) in history) {
@@ -142,7 +166,7 @@ Never invent other command forms. Several commands may be combined when the user
                 .openConnection() as HttpURLConnection
             c.requestMethod = "POST"
             c.connectTimeout = 10000
-            c.readTimeout = 45000
+            c.readTimeout = 20000
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("x-goog-api-key", key)
@@ -152,7 +176,7 @@ Never invent other command forms. Several commands may be combined when the user
                 val t = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
                 return code to t
             } catch (e: java.net.SocketTimeoutException) {
-                throw AiException(
+                throw Retryable(
                     if (e.message?.contains("connect", ignoreCase = true) == true)
                         "Couldn't connect to Google's AI server (timed out). Try mobile data or another Wi-Fi, and use Test AI in Settings."
                     else "Google connected but didn't answer in time. Tap Test AI in Settings to pick a working model."
@@ -174,14 +198,14 @@ Never invent other command forms. Several commands may be combined when the user
             } catch (_: Exception) {
                 ""
             }
-            throw AiException(
-                when (code) {
+            val msg = when (code) {
                     429 -> "AI limit reached for now. Try again in a minute."
                     400, 401, 403 -> "AI key was rejected. Check it in Settings. ${detail.take(80)}"
                     404 -> "AI model “$model” not found. Check Settings → AI."
                     else -> "AI error $code ${detail.take(80)}"
                 }
-            )
+            if (code in listOf(404, 429, 500, 502, 503, 504)) throw Retryable("$model: ${msg.take(60)}")
+            throw AiException(msg)
         }
 
         val raw = try {

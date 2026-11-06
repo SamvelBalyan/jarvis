@@ -20,6 +20,7 @@ import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.speech.tts.TextToSpeech
 import android.view.View
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
@@ -38,6 +39,9 @@ import java.util.TimeZone
 import kotlin.concurrent.thread
 
 class NoSuchAppException(message: String) : Exception(message)
+
+/** Thrown when the built-in rules can't make sense of a sentence (the AI layer gets a try). */
+class UnknownCommand(message: String) : Exception(message)
 
 /**
  * Understands a spoken/typed command and carries it out.
@@ -106,13 +110,84 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
     private fun clean(raw: String) =
         Parsers.normalizeSpeech(raw).replace(" dot ", ".").trim().trimEnd('.', '!', '?')
 
-    private fun runLine(raw: String) {
+    private fun runLine(raw: String, allowAi: Boolean = true) {
         val t = clean(raw)
         if (t.isEmpty()) return
+        if (allowAi && (t.startsWith("ask ") || t.startsWith("hey ") || t.startsWith("tell me "))) {
+            if (Ai.enabled()) {
+                askAi(raw.trim().replace(Regex("^(ask|hey|tell me)\\s+", RegexOption.IGNORE_CASE), ""))
+            } else {
+                say("🎤 $raw\n⚠ Add a free AI key in Settings → AI first")
+            }
+            return
+        }
         try {
             say("🎤 $raw\n→ " + route(t))
+        } catch (e: UnknownCommand) {
+            when {
+                allowAi && Ai.enabled() -> askAi(raw)
+                allowAi -> say("🎤 $raw\n⚠ ${e.message} Add a free AI key in Settings → AI and I'll understand much more.")
+                else -> say("🎤 $raw\n⚠ ${e.message}")
+            }
         } catch (e: Exception) {
             say("🎤 $raw\n⚠ ${e.message}")
+        }
+    }
+
+    // ---------------------------------------------------------------- AI layer
+
+    private fun askAi(text: String) {
+        say("🎤 $text\n→ 🤖 Thinking…")
+        thread {
+            try {
+                val r = Ai.interpret(text)
+                main.post {
+                    r.commands.forEachIndexed { i, cmd ->
+                        main.postDelayed({ runAiStep(cmd) }, 700L * (i + 1))
+                    }
+                }
+                val reply = if (r.reply.isNotEmpty()) r.reply
+                else if (r.commands.isNotEmpty()) "Doing: " + r.commands.joinToString(", ")
+                else "Hmm, I'm not sure what you meant."
+                say("🤖 $reply")
+                if (r.reply.isNotEmpty()) speak(r.reply)
+            } catch (e: Ai.AiException) {
+                say("⚠ ${e.message}")
+            } catch (e: Exception) {
+                say("⚠ Couldn't reach the AI (${e.message}). Check your internet.")
+            }
+        }
+    }
+
+    private fun runAiStep(cmd: String) {
+        val custom = Store.findCustom(clean(cmd))
+        if (custom != null) {
+            custom.actions.forEachIndexed { i, step -> main.postDelayed({ runLine(step, false) }, 1200L * i) }
+        } else {
+            runLine(cmd, false)
+        }
+    }
+
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: String? = null
+
+    private fun speak(text: String) {
+        if (!Store.flag("speak")) return
+        main.post {
+            if (tts == null) {
+                pendingSpeech = text
+                tts = TextToSpeech(ctx.applicationContext) { status ->
+                    if (status == TextToSpeech.SUCCESS) {
+                        ttsReady = true
+                        tts?.setLanguage(Locale.US)
+                        pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "jarvis") }
+                        pendingSpeech = null
+                    }
+                }
+            } else if (ttsReady) {
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+            }
         }
     }
 
@@ -220,7 +295,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                 c.contains("power off") -> send("shutdown")
             c.startsWith("open ") || c.startsWith("launch ") || c.startsWith("start ") ->
                 openOnPc(c.substringAfter(" ").trim())
-            else -> throw Exception("Didn't understand that PC command")
+            else -> throw UnknownCommand("Didn't understand that PC command.")
         }
     }
 
@@ -336,7 +411,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
             }
             t.startsWith("call ") || t.startsWith("phone ") -> call(t.substringAfter(" ").trim())
             t.startsWith("play ") || t.contains("youtube") -> play(t)
-            else -> throw Exception("Didn't understand that. Say “help” to see what I can do.")
+            else -> throw UnknownCommand("Didn't understand that. Say “help” to see what I can do.")
         }
     }
 

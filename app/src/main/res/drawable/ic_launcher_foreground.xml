@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- outer glow ring -->
+    <path
+        android:pathData="M54,54m-31,0a31,31 0 1,1 62,0a31,31 0 1,1 -62,0"
+        android:strokeColor="#555BC8FF"
+        android:strokeWidth="1.6" />
+    <!-- middle ring -->
+    <path
+        android:pathData="M54,54m-25,0a25,25 0 1,1 50,0a25,25 0 1,1 -50,0"
+        android:strokeColor="#998B7BFF"
+        android:strokeWidth="1.2" />
+    <!-- orb -->
+    <path android:pathData="M54,54m-18,0a18,18 0 1,1 36,0a18,18 0 1,1 -36,0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="48"
+                android:centerY="47"
+                android:gradientRadius="24">
+                <item android:offset="0" android:color="#FFC9F3FF" />
+                <item android:offset="0.55" android:color="#FF3B9DF6" />
+                <item android:offset="1" android:color="#FF7C3AED" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- highlight -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M48,47m-5,0a5,5 0 1,1 10,0a5,5 0 1,1 -10,0" />
+</vector>

@@ -523,7 +523,7 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
             }
         }
         item {
-            OutlinedButton(onClick = { brain.handle("ask say hello and tell me one fun fact") }) { Text("Test AI") }
+            OutlinedButton(onClick = { brain.testAi() }) { Text("Test AI") }
         }
         item { SectionTitle("PERMISSIONS (needed for Hey Jarvis)") }
         item {

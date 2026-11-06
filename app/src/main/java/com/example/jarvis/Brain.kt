@@ -199,7 +199,25 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         }
     }
 
-    private fun playPcm(pcm: ByteArray, rate: Int) {
+    /** Cuts the last 0.1 s (the model sometimes ends with a burst), fades out, and adds a little silence. */
+    private fun cleanTail(pcm: ByteArray, rate: Int): ByteArray {
+        val keep = pcm.size - (rate / 10) * 2
+        if (keep < rate) return pcm
+        val buf = pcm.copyOf(keep - keep % 2)
+        val total = buf.size / 2
+        val fade = minOf(total, (rate * 0.15).toInt())
+        for (k in 0 until fade) {
+            val idx = (total - fade + k) * 2
+            val v = ((buf[idx].toInt() and 0xFF) or (buf[idx + 1].toInt() shl 8)).toShort().toInt()
+            val o = (v * (1f - (k + 1).toFloat() / fade)).toInt()
+            buf[idx] = (o and 0xFF).toByte()
+            buf[idx + 1] = ((o shr 8) and 0xFF).toByte()
+        }
+        return buf + ByteArray((rate * 0.2).toInt() * 2)
+    }
+
+    private fun playPcm(raw: ByteArray, rate: Int) {
+        val pcm = cleanTail(raw, rate)
         try {
             track?.let {
                 try { it.stop() } catch (_: Exception) { }

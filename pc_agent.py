@@ -72,8 +72,74 @@ def act_search(arg):
     return act_open_url("https://www.google.com/search?q=" + quote_plus(arg or ""))
 
 
+_NUMS = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+         "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
+
+
 def _squeeze(s):
-    return "".join(ch for ch in s.lower() if ch.isalnum())
+    words = [_NUMS.get(w, w) for w in s.lower().split()]
+    return "".join(ch for ch in "".join(words) if ch.isalnum())
+
+
+# ---- installed games: scanned from folders such as Desktop/Games ----
+_SKIP = ("unins", "setup", "crash", "redist", "vcredist", "dxsetup", "launcher_helper", "installer", "updater", "helper")
+
+
+def _game_dirs():
+    home = os.path.expanduser("~")
+    dirs = list(CONFIG.get("game_dirs", []))
+    for base in (os.path.join(home, "Desktop"), os.path.join(home, "OneDrive", "Desktop"),
+                 os.path.join(os.environ.get("PUBLIC", r"C:\Users\Public"), "Desktop")):
+        dirs.append(os.path.join(base, "Games"))
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+def _best_exe(folder, game_name):
+    """Pick the program inside a game folder: a shortcut first, else the exe that looks most like the game."""
+    shortcuts, exes = [], []
+    for root, _dirs, files in os.walk(folder):
+        if root[len(folder):].count(os.sep) > 2:
+            continue
+        for f in files:
+            low = f.lower()
+            if any(x in low for x in _SKIP):
+                continue
+            full = os.path.join(root, f)
+            if low.endswith((".lnk", ".url")):
+                shortcuts.append(full)
+            elif low.endswith(".exe"):
+                exes.append(full)
+    if shortcuts:
+        return shortcuts[0]
+    if exes:
+        target = _squeeze(game_name)
+        exes.sort(key=lambda p: (-difflib.SequenceMatcher(None, target, _squeeze(os.path.splitext(os.path.basename(p))[0])).ratio(),
+                                 -os.path.getsize(p)))
+        return exes[0]
+    return None
+
+
+def scan_games():
+    """name -> path of the thing to launch."""
+    games = {}
+    for d in _game_dirs():
+        for entry in sorted(os.listdir(d)):
+            full = os.path.join(d, entry)
+            low = entry.lower()
+            if os.path.isdir(full):
+                target = _best_exe(full, entry)
+                if target:
+                    games[entry] = target
+            elif low.endswith((".lnk", ".url", ".exe")) and not any(x in low for x in _SKIP):
+                games[os.path.splitext(entry)[0]] = full
+    return games
+
+
+def _launch(path):
+    if path.lower().endswith(".exe"):
+        subprocess.Popen([path], cwd=os.path.dirname(path))
+    else:
+        os.startfile(path)  # noqa: shortcut from your own games folder
 
 
 def _find_app(name, apps):
@@ -92,11 +158,22 @@ def act_open_app(arg):
     name = (arg or "").strip().lower()
     apps = {k.lower(): v for k, v in CONFIG.get("apps", {}).items()}
     key = _find_app(name, apps)
-    if key is None:
-        raise ValueError(f"Unknown app '{name}'. Add it to config.json under 'apps'.")
     need_windows()
-    os.startfile(apps[key])  # noqa: only apps you listed can run
-    return f"opened {key}"
+    if key is not None:
+        os.startfile(apps[key])  # noqa: only apps you listed can run
+        return f"opened {key}"
+    games = scan_games()
+    gkey = _find_app(name, {k.lower(): v for k, v in games.items()})
+    if gkey is not None:
+        path = {k.lower(): v for k, v in games.items()}[gkey]
+        _launch(path)
+        return f"started game {gkey}"
+    raise ValueError(f"Unknown app or game '{name}'. Put its shortcut in Desktop/Games, or add it to config.json under 'apps'.")
+
+
+def act_list_games(arg):
+    names = sorted(scan_games())
+    return ", ".join(names) if names else "no games found (looked in Desktop/Games)"
 
 
 def act_sleep(arg):
@@ -129,6 +206,7 @@ ACTIONS = {
     "open_url": act_open_url,
     "search": act_search,
     "open_app": act_open_app,
+    "list_games": act_list_games,
     "sleep": act_sleep,
     "lock": act_lock,
     "restart": act_restart,

@@ -1,5 +1,7 @@
 package com.example.jarvis
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -426,6 +428,35 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
         contentPadding = PaddingValues(vertical = 12.dp)
     ) {
         item { Text("Settings", color = J.text, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+        item {
+            OutlinedButton(
+                onClick = {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val txt = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString() ?: ""
+                    var n = 0
+                    for (line in txt.lines()) {
+                        val i = line.indexOf('=')
+                        if (i <= 0) continue
+                        val k = line.substring(0, i).trim().lowercase()
+                        val v = line.substring(i + 1).trim()
+                        if (v.isNotEmpty() && k in setOf("ip", "port", "token", "mac", "broadcast", "aikey", "aimodel")) {
+                            Store.putStr(k, v)
+                            n++
+                        }
+                    }
+                    ip = Store.str("ip")
+                    port = Store.str("port", "8765")
+                    token = Store.str("token")
+                    mac = Store.str("mac")
+                    broadcast = Store.str("broadcast", "192.168.15.255")
+                    aiKey = Store.str("aikey")
+                    aiModel = Store.str("aimodel", "gemini-flash-latest")
+                    Toast.makeText(ctx, if (n > 0) "Imported $n settings" else "Nothing to import. Copy the settings text first.", Toast.LENGTH_LONG).show()
+                    if (n > 0) brain.pingPc()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("📋 Paste settings from clipboard") }
+        }
         item { SectionTitle("YOUR PC") }
         item { SettingField("PC IP address (e.g. 192.168.15.111)", ip) { ip = it } }
         item { SettingField("Port", port) { port = it } }

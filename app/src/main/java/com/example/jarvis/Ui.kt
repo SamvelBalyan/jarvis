@@ -421,9 +421,7 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
     var aiKey by remember { mutableStateOf(Store.str("aikey")) }
     var aiModel by remember { mutableStateOf(Store.str("aimodel", "gemini-flash-latest")) }
     var speak by remember { mutableStateOf(Store.flag("speak")) }
-    var natural by remember { mutableStateOf(Store.flag("naturalvoice")) }
-    var voiceName by remember { mutableStateOf(Store.str("ttsvoice", "Charon")) }
-    var piper by remember { mutableStateOf(Store.flag("piper")) }
+    var city by remember { mutableStateOf(Store.str("city", "Yerevan")) }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -525,19 +523,9 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
                 Store.putFlag("speak", it)
             }
         }
-        item {
-            ToggleRow("Natural AI voice", "Smoother voice from Google (needs internet); falls back to the phone's voice", natural) {
-                natural = it
-                Store.putFlag("naturalvoice", it)
-            }
-        }
-        item { SettingField("Voice name (Charon, Orus, Fenrir, Puck, Kore…)", voiceName) { voiceName = it; Store.putStr("ttsvoice", it) } }
-        item {
-            ToggleRow("Offline voice (Piper)", "British male voice built into the app; works without internet and is used when the Google voice isn't available", piper) {
-                piper = it
-                Store.putFlag("piper", it)
-            }
-        }
+        item { SettingField("Home city (for weather)", city) { city = it; Store.putStr("city", it) } }
+        item { SectionTitle("VOICE") }
+        item { VoiceBlock(brain) }
         item {
             OutlinedButton(onClick = { brain.testAi() }) { Text("Test AI") }
         }
@@ -557,7 +545,7 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
         }
         item {
             Text(
-                "Jarvis 4.4 • offline voice; the cloud is used only if you add an AI key.",
+                "Jarvis 4.6 • offline voice; the cloud is used only if you add an AI key.",
                 color = J.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp)
             )
         }

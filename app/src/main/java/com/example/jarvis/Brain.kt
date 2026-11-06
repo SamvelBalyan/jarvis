@@ -10,7 +10,10 @@ import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Handler
@@ -182,33 +185,76 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
     private var ttsReady = false
     private var pendingSpeech: String? = null
 
+    private var track: AudioTrack? = null
+
     private fun speak(text: String) {
         if (!Store.flag("speak")) return
-        main.post {
-            if (tts == null) {
-                pendingSpeech = text
-                tts = TextToSpeech(ctx.applicationContext) { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        ttsReady = true
-                        // A calm British male voice if the phone has one (Google voices "gbb"/"gbd").
-                        tts?.setLanguage(Locale.UK)
-                        try {
-                            val all = tts?.voices?.toList() ?: emptyList()
-                            val uk = all.filter { it.locale == Locale.UK && !it.isNetworkConnectionRequired }
-                            val male = uk.firstOrNull { it.name.contains("gbd") || it.name.contains("gbb") }
-                            val pick = male ?: uk.firstOrNull()
-                            if (pick != null) tts?.setVoice(pick)
-                        } catch (_: Exception) {
-                        }
-                        tts?.setPitch(0.88f)
-                        tts?.setSpeechRate(0.97f)
-                        pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "jarvis") }
-                        pendingSpeech = null
-                    }
-                }
-            } else if (ttsReady) {
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+        if (Store.flag("naturalvoice") && Ai.enabled()) {
+            thread {
+                val r = Ai.tts(text)
+                if (r != null) main.post { playPcm(r.first, r.second) } else main.post { localSpeak(text) }
             }
+        } else {
+            main.post { localSpeak(text) }
+        }
+    }
+
+    private fun playPcm(pcm: ByteArray, rate: Int) {
+        try {
+            track?.let {
+                try { it.stop() } catch (_: Exception) { }
+                it.release()
+            }
+            val t = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(rate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(pcm.size)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            t.write(pcm, 0, pcm.size)
+            t.play()
+            track = t
+            main.postDelayed({
+                try { t.release() } catch (_: Exception) { }
+                if (track === t) track = null
+            }, pcm.size / 2L * 1000L / rate + 800L)
+        } catch (e: Exception) {
+            // never let a sound problem break a command
+        }
+    }
+
+    private fun localSpeak(text: String) {
+        if (tts == null) {
+            pendingSpeech = text
+            tts = TextToSpeech(ctx.applicationContext) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    ttsReady = true
+                    tts?.setLanguage(Locale.UK)
+                    try {
+                        val all = tts?.voices?.toList() ?: emptyList()
+                        val uk = all.filter { it.locale == Locale.UK }
+                        val male = uk.firstOrNull { it.name.contains("gbd") || it.name.contains("gbb") }
+                        val pick = male ?: uk.firstOrNull()
+                        if (pick != null) tts?.setVoice(pick)
+                    } catch (_: Exception) {
+                    }
+                    pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "jarvis") }
+                    pendingSpeech = null
+                }
+            }
+        } else if (ttsReady) {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
         }
     }
 

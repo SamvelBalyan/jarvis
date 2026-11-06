@@ -3,6 +3,7 @@ package com.example.jarvis
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,6 +19,8 @@ object Store {
     val customCommands = mutableStateListOf<CustomCommand>()
     val wakeRunning = mutableStateOf(false)
     val pcOnline = mutableStateOf<Boolean?>(null)
+    val downloading = mutableStateMapOf<String, Int>()
+    val voiceTick = mutableStateOf(0)
 
     fun init(ctx: Context) {
         if (prefs != null) return

@@ -23,6 +23,15 @@ jobs:
         with:
           gradle-version: 8.7
 
+      - name: Download offline Piper voice and sherpa-onnx
+        run: |
+          mkdir -p app/libs app/src/main/assets/piper
+          curl -L --fail -o app/libs/sherpa-onnx-2.0.1.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar
+          curl -L --fail -o voice.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-alan-medium.tar.bz2
+          tar xf voice.tar.bz2
+          cp vits-piper-en_GB-alan-medium/*.onnx vits-piper-en_GB-alan-medium/tokens.txt app/src/main/assets/piper/
+          ls -la app/src/main/assets/piper app/libs
+
       - name: Download offline voice model
         run: |
           curl -L --fail -o model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip

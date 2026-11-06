@@ -11,8 +11,9 @@ android {
         applicationId = "com.example.jarvis"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "4.3.1"
+        versionCode = 13
+        versionName = "4.4.0"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -41,6 +42,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
     implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation(files("libs/sherpa-onnx-2.0.1.aar"))
+    implementation("com.github.csukuangfj.piper-phonemize:piper-phonemize:v1.5.9")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)

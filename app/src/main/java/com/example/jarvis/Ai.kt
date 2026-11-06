@@ -55,6 +55,61 @@ Never invent other command forms. Several commands may be combined when the user
 """.trim()
     }
 
+
+    /** Quick check of key, network and model name. Blocking: run off the main thread. */
+    fun diagnose(): String {
+        val key = Store.str("aikey")
+        if (key.isEmpty()) return "⚠ Add your Gemini key in Settings first"
+        val t0 = System.currentTimeMillis()
+        try {
+            val c = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200")
+                .openConnection() as HttpURLConnection
+            c.connectTimeout = 10000
+            c.readTimeout = 15000
+            c.setRequestProperty("x-goog-api-key", key)
+            val code = c.responseCode
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
+            val ms = System.currentTimeMillis() - t0
+            if (code !in 200..299) {
+                val detail = try {
+                    JSONObject(text).getJSONObject("error").optString("message")
+                } catch (_: Exception) {
+                    ""
+                }
+                return "⚠ Google answered $code after $ms ms: ${detail.take(120)}"
+            }
+            val arr = JSONObject(text).optJSONArray("models") ?: JSONArray()
+            val usable = ArrayList<String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val methods = o.optJSONArray("supportedGenerationMethods")
+                var ok = false
+                if (methods != null) for (j in 0 until methods.length()) if (methods.optString(j) == "generateContent") ok = true
+                if (ok) usable.add(o.optString("name").removePrefix("models/"))
+            }
+            val bad = listOf("lite", "image", "tts", "live", "audio", "exp", "robotics", "computer", "embedding", "learnlm", "gemma", "vision")
+            val flash = usable.filter { n -> n.contains("flash") && bad.none { n.contains(it) } }
+                .sortedWith(compareBy<String>({ it.contains("preview") }, { it.length }))
+            val current = Store.str("aimodel", "gemini-flash-latest")
+            var note = ""
+            if (current !in usable) {
+                val pick = flash.firstOrNull() ?: usable.firstOrNull()
+                if (pick != null) {
+                    Store.putStr("aimodel", pick)
+                    note = " Switched model to $pick."
+                }
+            }
+            return "✅ Connected to Google in $ms ms (${usable.size} models available).$note"
+        } catch (e: java.net.SocketTimeoutException) {
+            val sec = (System.currentTimeMillis() - t0) / 1000
+            return "⚠ Timed out after ${sec}s talking to Google. Your network may be blocking Google AI. Try mobile data or another Wi-Fi."
+        } catch (e: java.net.UnknownHostException) {
+            return "⚠ No internet connection (couldn't find Google's server)."
+        } catch (e: Exception) {
+            return "⚠ ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
     /** Blocking network call: run it off the main thread. */
     fun interpret(said: String): Result {
         val key = Store.str("aikey")
@@ -97,7 +152,13 @@ Never invent other command forms. Several commands may be combined when the user
                 val t = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
                 return code to t
             } catch (e: java.net.SocketTimeoutException) {
-                throw AiException("The AI took too long to answer. Try again, or pick a faster model in Settings.")
+                throw AiException(
+                    if (e.message?.contains("connect", ignoreCase = true) == true)
+                        "Couldn't connect to Google's AI server (timed out). Try mobile data or another Wi-Fi, and use Test AI in Settings."
+                    else "Google connected but didn't answer in time. Tap Test AI in Settings to pick a working model."
+                )
+            } catch (e: java.net.UnknownHostException) {
+                throw AiException("No internet connection (couldn't find Google's server).")
             }
         }
 

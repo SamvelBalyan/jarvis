@@ -69,7 +69,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
     )
 
     private val helpText =
-        "Say “Jarvis” then:\n" +
+        "Say “Hey Jarvis” then:\n" +
             "• open <app> (phone, or PC if not on phone)\n" +
             "• open google and search for <text>\n" +
             "• set alarm for 7:30 am called gym\n" +

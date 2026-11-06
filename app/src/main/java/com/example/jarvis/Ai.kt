@@ -68,26 +68,45 @@ Never invent other command forms. Several commands may be combined when the user
         }
         contents.put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", said))))
 
-        val body = JSONObject()
-            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt()))))
-            .put("contents", contents)
-            .put(
-                "generationConfig",
-                JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json")
-            )
+        fun call(withThinking: Boolean): Pair<Int, String> {
+            val gen = JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json")
+            if (withThinking) {
+                // Keep answers fast: Gemini 2.5 uses a token budget, newer models use a level.
+                gen.put(
+                    "thinkingConfig",
+                    if (model.contains("2.5")) JSONObject().put("thinkingBudget", 0)
+                    else JSONObject().put("thinkingLevel", "low")
+                )
+            }
+            val body = JSONObject()
+                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt()))))
+                .put("contents", contents)
+                .put("generationConfig", gen)
 
-        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-            .openConnection() as HttpURLConnection
-        c.requestMethod = "POST"
-        c.connectTimeout = 8000
-        c.readTimeout = 25000
-        c.doOutput = true
-        c.setRequestProperty("Content-Type", "application/json")
-        c.setRequestProperty("x-goog-api-key", key)
-        c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+                .openConnection() as HttpURLConnection
+            c.requestMethod = "POST"
+            c.connectTimeout = 10000
+            c.readTimeout = 45000
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("x-goog-api-key", key)
+            try {
+                c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = c.responseCode
+                val t = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
+                return code to t
+            } catch (e: java.net.SocketTimeoutException) {
+                throw AiException("The AI took too long to answer. Try again, or pick a faster model in Settings.")
+            }
+        }
 
-        val code = c.responseCode
-        val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
+        var (code, text) = call(true)
+        if (code == 400 && text.contains("think", ignoreCase = true)) {
+            val r = call(false) // this model doesn't accept our thinking setting
+            code = r.first
+            text = r.second
+        }
         if (code !in 200..299) {
             val detail = try {
                 JSONObject(text).getJSONObject("error").optString("message")

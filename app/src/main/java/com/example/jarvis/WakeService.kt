@@ -52,6 +52,36 @@ class WakeService : Service() {
         return false
     }
 
+    /**
+     * Strict check on a FINAL recognizer result: the utterance must be just "hey jarvis" (at most one stray
+     * noise token), short, and confidently recognized. Ordinary speech that merely sounds similar for a
+     * moment is rejected because it comes with lots of other words, or is spoken too slowly or unsure.
+     */
+    private fun isStrictWake(json: String?): Boolean {
+        if (json == null) return false
+        try {
+            val o = JSONObject(json)
+            val tokens = o.optString("text").trim().split(" ").filter { it.isNotEmpty() }
+            if (tokens.count { it == "[unk]" } > 1) return false
+            val core = tokens.filter { it != "[unk]" }
+            if (core.size != 2 || core[0] != "hey" || core[1] !in wakeWords) return false
+            val arr = o.optJSONArray("result") ?: return true
+            var start = Double.MAX_VALUE
+            var end = 0.0
+            for (i in 0 until arr.length()) {
+                val w = arr.getJSONObject(i)
+                val word = w.optString("word")
+                if (word == "[unk]") continue
+                if (w.optDouble("conf", 1.0) < 0.7) return false
+                start = minOf(start, w.optDouble("start", 0.0))
+                end = maxOf(end, w.optDouble("end", 0.0))
+            }
+            return end - start <= 1.6
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
     private val finishRunnable = Runnable { finish(quiet = false) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -121,6 +151,7 @@ class WakeService : Service() {
         try {
             stopSpeech()
             val rec = Recognizer(m, 16000.0f, wakeGrammar)
+            rec.setWords(true) // gives per-word confidence and timing for the strict wake check
             val s = SpeechService(rec, 16000.0f)
             recognizer = rec
             speech = s
@@ -209,9 +240,7 @@ class WakeService : Service() {
         override fun onPartialResult(hypothesis: String?) {
             if (g != gen) return
             val text = field(hypothesis, "partial")
-            if (!inCommand) {
-                if (isWake(text)) onWake()
-            } else if (text.isNotEmpty()) {
+            if (inCommand && text.isNotEmpty()) {
                 overlay.setText(text, null)
                 overlay.pulse()
             }
@@ -222,7 +251,7 @@ class WakeService : Service() {
             val text = field(hypothesis, "text")
             if (text.isEmpty()) return
             if (!inCommand) {
-                if (isWake(text)) onWake()
+                if (isStrictWake(hypothesis)) onWake()
             } else {
                 handleCommand(text)
             }

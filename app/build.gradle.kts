@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.jarvis"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "4.1.1"
+        versionCode = 7
+        versionName = "4.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

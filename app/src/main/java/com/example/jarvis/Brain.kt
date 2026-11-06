@@ -8,7 +8,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
@@ -43,7 +47,10 @@ class NoSuchAppException(message: String) : Exception(message)
 class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private val main = Handler(Looper.getMainLooper())
-    private val prefs = ctx.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+
+    init {
+        Store.init(ctx)
+    }
 
     private val sites = mapOf(
         "google" to "google.com", "youtube" to "youtube.com", "gmail" to "mail.google.com",
@@ -57,8 +64,18 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
             "\\bto (?:my )?(?:google )?calendar\\b"
     )
 
-    private fun cfg(key: String, default: String = ""): String =
-        (prefs.getString(key, null) ?: "").trim().ifEmpty { default }
+    private val helpText =
+        "Say “Jarvis” then:\n" +
+            "• open <app> (phone, or PC if not on phone)\n" +
+            "• open google and search for <text>\n" +
+            "• set alarm for 7:30 am called gym\n" +
+            "• remind me to <thing> tomorrow at 5 pm\n" +
+            "• call <contact> • play <song> • navigate to <place>\n" +
+            "• turn on pc • put pc to sleep • lock pc • is pc online\n" +
+            "• flashlight on/off • volume up/down • battery • what time is it\n" +
+            "• or any command you add in the Commands tab"
+
+    private fun cfg(key: String, default: String = ""): String = Store.str(key, default)
 
     private fun say(msg: String) {
         main.post { report(msg) }
@@ -69,10 +86,28 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
-    // ---------------------------------------------------------------- entry point
+    // ---------------------------------------------------------------- entry points
 
+    /** Run something you said or typed. */
     fun handle(raw: String) {
-        val t = Parsers.normalizeSpeech(raw).replace(" dot ", ".").trim().trimEnd('.', '!', '?')
+        val t = clean(raw)
+        if (t.isEmpty()) return
+        val custom = Store.findCustom(t)
+        if (custom != null) {
+            say("🎤 $raw\n→ Running “${custom.phrase}” (${custom.actions.size} step${if (custom.actions.size == 1) "" else "s"})")
+            custom.actions.forEachIndexed { i, step ->
+                main.postDelayed({ runLine(step) }, 1200L * (i + 1))
+            }
+            return
+        }
+        runLine(raw)
+    }
+
+    private fun clean(raw: String) =
+        Parsers.normalizeSpeech(raw).replace(" dot ", ".").trim().trimEnd('.', '!', '?')
+
+    private fun runLine(raw: String) {
+        val t = clean(raw)
         if (t.isEmpty()) return
         try {
             say("🎤 $raw\n→ " + route(t))
@@ -82,6 +117,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
     }
 
     private fun route(t: String): String {
+        builtin(t)?.let { return it }
         val pcWord = Regex("\\b(pc|computer|laptop)\\b")
         val wake = Regex("(wake|turn on|power on|boot|start up).*\\b(pc|computer|laptop)\\b")
         if (wake.containsMatchIn(t)) {
@@ -90,6 +126,52 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         }
         if (pcWord.containsMatchIn(t)) return pcCommand(t)
         return phoneCommand(t)
+    }
+
+    // ---------------------------------------------------------------- built-in little helpers
+
+    private fun builtin(t: String): String? {
+        if (t == "help" || t == "what can you do" || t == "what can i say" || t == "commands") return helpText
+        if (t.contains("what time") || t == "time") {
+            return "It's " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        }
+        if (t.contains("what day") || t.contains("the date") || t.contains("today's date")) {
+            return SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date())
+        }
+        if (t.contains("battery") && !Regex("\\b(pc|computer|laptop)\\b").containsMatchIn(t)) {
+            val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            return "Battery ${bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}%"
+        }
+        if (Regex("\\b(flashlight|torch)\\b").containsMatchIn(t)) return torch(!t.contains(" off"))
+        if (Regex("\\b(volume up|louder|turn it up)\\b").containsMatchIn(t)) return volume(AudioManager.ADJUST_RAISE)
+        if (Regex("\\b(volume down|quieter|turn it down)\\b").containsMatchIn(t)) return volume(AudioManager.ADJUST_LOWER)
+        if (t == "mute" || t == "mute the volume") return volume(AudioManager.ADJUST_MUTE)
+        if (t == "unmute") return volume(AudioManager.ADJUST_UNMUTE)
+        val nav = Regex("^(?:navigate to|directions to|take me to|route to) (.+)$").find(t)
+        if (nav != null) {
+            val place = nav.groupValues[1].trim()
+            launch(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + enc(place))))
+            return "Showing “$place” on the map"
+        }
+        return null
+    }
+
+    private fun torch(on: Boolean): String {
+        val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val id = cm.cameraIdList.firstOrNull {
+            cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: throw Exception("No flashlight on this phone")
+        cm.setTorchMode(id, on)
+        return if (on) "🔦 Flashlight on" else "Flashlight off"
+    }
+
+    private fun volume(direction: Int): String {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val times = if (direction == AudioManager.ADJUST_RAISE || direction == AudioManager.ADJUST_LOWER) 3 else 1
+        repeat(times) { am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI) }
+        val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        return "Volume ${cur * 100 / max}%"
     }
 
     // ---------------------------------------------------------------- launching screens
@@ -127,6 +209,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private fun pcCommand(t: String): String {
         Parsers.parseSearch(t)?.let { return send("open_url", searchUrl(it)) }
+        if (Regex("\\b(status|online|awake|ping)\\b").containsMatchIn(t)) return send("ping")
         val c = t.replace(Regex("\\b(on|in|at|my|the|to|please|pc|computer|laptop)\\b"), " ")
             .replace(Regex("\\s+"), " ").trim()
         return when {
@@ -147,32 +230,59 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         else -> send("open_app", target)
     }
 
-    private fun send(action: String, arg: String? = null): String {
+    /** Sends one command to the agent on the PC. Throws on network problems. */
+    private fun postCommand(action: String, arg: String?): JSONObject {
         val ip = cfg("ip")
         val port = cfg("port", "8765")
         val token = cfg("token")
         if (ip.isEmpty() || token.isEmpty()) throw Exception("Fill in PC IP and token in Settings, then Save")
+        val c = URL("http://$ip:$port/command").openConnection() as HttpURLConnection
+        c.requestMethod = "POST"
+        c.connectTimeout = 4000
+        c.readTimeout = 8000
+        c.doOutput = true
+        val body = JSONObject().put("token", token).put("action", action)
+        if (arg != null) body.put("arg", arg)
+        c.outputStream.use { it.write(body.toString().toByteArray()) }
+        val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
+        return JSONObject(stream.bufferedReader().readText())
+    }
+
+    private fun send(action: String, arg: String? = null): String {
+        if (cfg("ip").isEmpty() || cfg("token").isEmpty()) {
+            throw Exception("Fill in PC IP and token in Settings, then Save")
+        }
         thread {
             try {
-                val c = URL("http://$ip:$port/command").openConnection() as HttpURLConnection
-                c.requestMethod = "POST"
-                c.connectTimeout = 4000
-                c.readTimeout = 8000
-                c.doOutput = true
-                val body = JSONObject().put("token", token).put("action", action)
-                if (arg != null) body.put("arg", arg)
-                c.outputStream.use { it.write(body.toString().toByteArray()) }
-                val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
-                val resp = JSONObject(stream.bufferedReader().readText())
+                val resp = postCommand(action, arg)
+                val ok = resp.optBoolean("ok")
+                main.post { Store.pcOnline.value = true }
                 say(
-                    if (resp.optBoolean("ok")) "✅ PC: ${resp.optString("result")}"
-                    else "⚠ PC: ${resp.optString("error")}"
+                    if (!ok) "⚠ PC: ${resp.optString("error")}"
+                    else if (action == "ping") "✅ PC is online"
+                    else "✅ PC: ${resp.optString("result")}"
                 )
             } catch (e: Exception) {
+                main.post { Store.pcOnline.value = false }
                 say("⚠ Can't reach PC (${e.message}). Is it awake and on the same Wi-Fi?")
             }
         }
         return "Sending '$action' to PC…"
+    }
+
+    /** Quiet background check used by the status dot. */
+    fun pingPc(announce: Boolean = false) {
+        if (cfg("ip").isEmpty() || cfg("token").isEmpty()) {
+            main.post { Store.pcOnline.value = null }
+            return
+        }
+        thread {
+            val ok = try { postCommand("ping", null).optBoolean("ok") } catch (e: Exception) { false }
+            main.post {
+                Store.pcOnline.value = ok
+                if (announce) report(if (ok) "✅ PC is online" else "⚠ PC not reachable")
+            }
+        }
     }
 
     private fun wakePc() {
@@ -226,7 +336,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
             }
             t.startsWith("call ") || t.startsWith("phone ") -> call(t.substringAfter(" ").trim())
             t.startsWith("play ") || t.contains("youtube") -> play(t)
-            else -> throw Exception("Didn't understand that")
+            else -> throw Exception("Didn't understand that. Say “help” to see what I can do.")
         }
     }
 
@@ -239,7 +349,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         if (a.label != null) i.putExtra(AlarmClock.EXTRA_MESSAGE, a.label)
         if (a.days.isNotEmpty()) i.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, ArrayList<Int>(a.days))
         launch(i)
-        return "Alarm %02d:%02d".format(a.hour, a.minute) +
+        return "⏰ Alarm %02d:%02d".format(a.hour, a.minute) +
             (if (a.label != null) " “${a.label}”" else "") +
             (if (a.days.isNotEmpty()) " (repeating)" else "")
     }
@@ -258,7 +368,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                 .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
                 .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
         )
-        return "Timer set for ${m.value}"
+        return "⏳ Timer set for ${m.value}"
     }
 
     // ---- calendar
@@ -371,7 +481,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         val uri = Uri.parse("tel:" + Uri.encode(n))
         if (granted(Manifest.permission.CALL_PHONE)) launch(Intent(Intent.ACTION_CALL, uri))
         else launch(Intent(Intent.ACTION_DIAL, uri))
-        return "Calling $shown"
+        return "📞 Calling $shown"
     }
 
     private fun openApp(name: String): String {
@@ -403,7 +513,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                     .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
                     .putExtra("query", q)
             )
-            return "Playing \"$q\" on YouTube Music"
+            return "🎵 Playing \"$q\" on YouTube Music"
         }
         if (installed("com.google.android.youtube")) {
             launch(Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube").putExtra("query", q))

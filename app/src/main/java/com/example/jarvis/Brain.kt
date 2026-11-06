@@ -189,12 +189,16 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private fun speak(text: String) {
         if (!Store.flag("speak")) return
-        if (Store.flag("naturalvoice") && Ai.enabled()) {
-            thread {
+        thread {
+            // 1) Gemini natural voice (online)  2) Piper offline voice  3) phone voice
+            if (Store.flag("naturalvoice") && Ai.enabled()) {
                 val r = Ai.tts(text)
-                if (r != null) main.post { playPcm(r.first, r.second) } else main.post { localSpeak(text) }
+                if (r != null) { main.post { playPcm(r.first, r.second) }; return@thread }
             }
-        } else {
+            if (Store.flag("piper")) {
+                val r = PiperTts.speak(ctx, text)
+                if (r != null) { main.post { playPcm(r.first, r.second) }; return@thread }
+            }
             main.post { localSpeak(text) }
         }
     }

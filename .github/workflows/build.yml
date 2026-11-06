@@ -23,6 +23,14 @@ jobs:
         with:
           gradle-version: 8.7
 
+      - name: Download offline voice model
+        run: |
+          curl -L --fail -o model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          unzip -q model.zip
+          mkdir -p app/src/main/assets
+          mv vosk-model-small-en-us-0.15 app/src/main/assets/model-en-us
+          cat /proc/sys/kernel/random/uuid > app/src/main/assets/model-en-us/uuid
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 

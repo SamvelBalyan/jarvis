@@ -40,7 +40,17 @@ class WakeService : Service() {
 
     // words the small recognizer may produce for "Jarvis"
     private val wakeWords = setOf("jarvis", "travis", "jarvas", "gervais", "jarvie")
-    private val wakeGrammar = "[\"jarvis\", \"travis\", \"jarvas\", \"gervais\", \"jarvie\", \"[unk]\"]"
+    // Needs the two words "hey jarvis" together, so random words starting with J don't trigger it.
+    private val wakeGrammar =
+        "[\"hey jarvis\", \"hey travis\", \"hey jarvas\", \"hey gervais\", \"hey jarvie\", \"[unk]\"]"
+
+    private fun isWake(text: String): Boolean {
+        val w = text.split(" ").filter { it.isNotEmpty() }
+        for (i in 0 until w.size - 1) {
+            if (w[i] == "hey" && w[i + 1] in wakeWords) return true
+        }
+        return false
+    }
 
     private val finishRunnable = Runnable { finish(quiet = false) }
 
@@ -115,7 +125,7 @@ class WakeService : Service() {
             recognizer = rec
             speech = s
             s.startListening(listener(g))
-            update("Listening for “Jarvis”")
+            update("Listening for “Hey Jarvis”")
         } catch (e: Exception) {
             speech = null
             update("Microphone problem: ${e.message}. Retrying…")
@@ -200,7 +210,7 @@ class WakeService : Service() {
             if (g != gen) return
             val text = field(hypothesis, "partial")
             if (!inCommand) {
-                if (text.split(" ").any { it in wakeWords }) onWake()
+                if (isWake(text)) onWake()
             } else if (text.isNotEmpty()) {
                 overlay.setText(text, null)
                 overlay.pulse()
@@ -212,7 +222,7 @@ class WakeService : Service() {
             val text = field(hypothesis, "text")
             if (text.isEmpty()) return
             if (!inCommand) {
-                if (text.split(" ").any { it in wakeWords }) onWake()
+                if (isWake(text)) onWake()
             } else {
                 handleCommand(text)
             }

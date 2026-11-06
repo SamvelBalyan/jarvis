@@ -50,12 +50,13 @@ Reply with ONLY a JSON object: {"commands": [...], "reply": "..."}
 - call <contact name>
 - play <song or artist>
 - navigate to <place>
+- turn on pc and open <game or app name>   (wakes the PC, then starts the game; games live in the PC's Desktop/Games folder)
 - turn on pc / put pc to sleep / lock pc / restart pc / shut down pc
 - flashlight on / flashlight off / volume up / volume down / battery
 ${if (custom.isNotEmpty()) "- or one of the user's own shortcuts: $custom" else ""}
 Never invent other command forms. Several commands may be combined when the user asks for several things.
 
-"reply" is a short, natural answer (at most two sentences), shown and read aloud to the user. For questions or chit-chat, put the answer in "reply" and leave "commands" empty. When you run commands, "reply" should be a brief confirmation, or empty. For live information you cannot know (weather, news, sports scores, prices), use a google search command instead of guessing.
+"reply" is read aloud by a voice, so write it the way you would say it: plain spoken sentences, no markdown, no lists, no emoji, no asterisks. Give the shortest answer that fully answers the question: usually one sentence, never more than about 60 words (under 30 seconds of speech). No greeting, no "Sure", no restating the question. If a full answer would be longer, give the key point and end with "Want more?". For questions or chit-chat, put the answer in "reply" and leave "commands" empty. When you run commands, "reply" should be empty or at most three words. The app already answers weather, currency conversion and time zone questions by itself. If a question truly needs live data you cannot know (news, sports scores, stock prices), say briefly that you can't check live information.
 """.trim()
     }
 
@@ -93,10 +94,10 @@ Never invent other command forms. Several commands may be combined when the user
     }
 
     /** Returns raw 16-bit mono PCM and its sample rate, or null if it didn't work. Blocking. */
-    fun tts(text: String): Pair<ByteArray, Int>? {
+    fun tts(text: String, voiceName: String = Store.str("ttsvoice", "Charon")): Pair<ByteArray, Int>? {
         val key = Store.str("aikey")
         if (key.isEmpty()) return null
-        val voice = Store.str("ttsvoice", "Charon")
+        val voice = voiceName
         for (model in ttsModels(key).take(2)) {
             try {
                 val body = JSONObject()
@@ -106,7 +107,7 @@ Never invent other command forms. Several commands may be combined when the user
                             JSONObject().put(
                                 "parts",
                                 JSONArray().put(
-                                    JSONObject().put("text", text.take(400))
+                                    JSONObject().put("text", text.take(700))
                                 )
                             )
                         )

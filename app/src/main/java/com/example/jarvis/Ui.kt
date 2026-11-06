@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -338,7 +339,8 @@ fun CommandsScreen(brain: Brain) {
                             "• add event dentist on november 20 at 4 pm\n" +
                             "• call mom • play despacito • navigate to Republic Square\n" +
                             "• turn on pc • put pc to sleep • lock pc • is pc online\n" +
-                            "• flashlight on • volume up • what time is it • battery",
+                            "• flashlight on • volume up • what time is it • battery\n" +
+                            "• with a free AI key: say anything natural, or “ask …” for questions",
                         color = J.dim, fontSize = 13.sp
                     )
                 }
@@ -414,6 +416,9 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
     var broadcast by remember { mutableStateOf(Store.str("broadcast", "192.168.15.255")) }
     var sound by remember { mutableStateOf(Store.flag("sound")) }
     var overlayOn by remember { mutableStateOf(Store.flag("overlay")) }
+    var aiKey by remember { mutableStateOf(Store.str("aikey")) }
+    var aiModel by remember { mutableStateOf(Store.str("aimodel", "gemini-flash-latest")) }
+    var speak by remember { mutableStateOf(Store.flag("speak")) }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -460,6 +465,35 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
                 Store.putFlag("overlay", it)
             }
         }
+        item { SectionTitle("SMART MODE (FREE AI, OPTIONAL)") }
+        item {
+            Text(
+                "Get a free key at aistudio.google.com/apikey and paste it here. When I don't understand a sentence, " +
+                    "the AI works out what you meant and can answer questions. Say or type “ask …” to talk to it directly.",
+                color = J.dim, fontSize = 12.sp
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = aiKey,
+                onValueChange = { aiKey = it; Store.putStr("aikey", it) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Gemini API key") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                shape = RoundedCornerShape(14.dp)
+            )
+        }
+        item { SettingField("AI model", aiModel) { aiModel = it; Store.putStr("aimodel", it) } }
+        item {
+            ToggleRow("Speak answers", "Read the AI's answers out loud", speak) {
+                speak = it
+                Store.putFlag("speak", it)
+            }
+        }
+        item {
+            OutlinedButton(onClick = { brain.handle("ask say hello and tell me one fun fact") }) { Text("Test AI") }
+        }
         item { SectionTitle("PERMISSIONS (needed for Hey Jarvis)") }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -476,7 +510,7 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
         }
         item {
             Text(
-                "Jarvis 4.0 • offline voice, no accounts, no cloud.",
+                "Jarvis 4.1 • offline voice; the cloud is used only if you add an AI key.",
                 color = J.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp)
             )
         }

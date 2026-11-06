@@ -159,6 +159,16 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         }
     }
 
+    /** Settings → Test AI: checks the connection first, then asks a sample question. */
+    fun testAi() {
+        say("🤖 Checking the AI connection…")
+        thread {
+            val d = Ai.diagnose()
+            say(d)
+            if (d.startsWith("✅")) main.post { askAi("say hello and tell me one fun fact") }
+        }
+    }
+
     private fun runAiStep(cmd: String) {
         val custom = Store.findCustom(clean(cmd))
         if (custom != null) {

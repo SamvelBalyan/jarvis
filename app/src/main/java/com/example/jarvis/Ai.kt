@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import android.util.Base64
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,6 +59,94 @@ Never invent other command forms. Several commands may be combined when the user
 """.trim()
     }
 
+
+
+    // ---------------------------------------------------------------- natural voice (Gemini speech)
+
+    private var ttsModelCache: List<String>? = null
+
+    private fun ttsModels(key: String): List<String> {
+        ttsModelCache?.let { return it }
+        val out = ArrayList<String>()
+        try {
+            val c = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200")
+                .openConnection() as HttpURLConnection
+            c.connectTimeout = 8000
+            c.readTimeout = 12000
+            c.setRequestProperty("x-goog-api-key", key)
+            if (c.responseCode in 200..299) {
+                val arr = JSONObject(c.inputStream.bufferedReader().readText()).optJSONArray("models") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val name = o.optString("name").removePrefix("models/")
+                    val methods = o.optJSONArray("supportedGenerationMethods")
+                    var ok = false
+                    if (methods != null) for (j in 0 until methods.length()) if (methods.optString(j) == "generateContent") ok = true
+                    if (ok && name.contains("tts")) out.add(name)
+                }
+            }
+        } catch (_: Exception) {
+        }
+        val sorted = out.sortedWith(compareBy<String>({ !it.contains("flash") }, { it.length }))
+        if (sorted.isNotEmpty()) ttsModelCache = sorted
+        return sorted.ifEmpty { listOf("gemini-2.5-flash-preview-tts") }
+    }
+
+    /** Returns raw 16-bit mono PCM and its sample rate, or null if it didn't work. Blocking. */
+    fun tts(text: String): Pair<ByteArray, Int>? {
+        val key = Store.str("aikey")
+        if (key.isEmpty()) return null
+        val voice = Store.str("ttsvoice", "Charon")
+        for (model in ttsModels(key).take(2)) {
+            try {
+                val body = JSONObject()
+                    .put(
+                        "contents",
+                        JSONArray().put(
+                            JSONObject().put(
+                                "parts",
+                                JSONArray().put(
+                                    JSONObject().put(
+                                        "text",
+                                        "Say in a calm, refined British male voice at a natural pace: " + text.take(400)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                    .put(
+                        "generationConfig",
+                        JSONObject()
+                            .put("responseModalities", JSONArray().put("AUDIO"))
+                            .put(
+                                "speechConfig",
+                                JSONObject().put(
+                                    "voiceConfig",
+                                    JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", voice))
+                                )
+                            )
+                    )
+                val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+                    .openConnection() as HttpURLConnection
+                c.requestMethod = "POST"
+                c.connectTimeout = 8000
+                c.readTimeout = 25000
+                c.doOutput = true
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("x-goog-api-key", key)
+                c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                if (c.responseCode !in 200..299) continue
+                val resp = JSONObject(c.inputStream.bufferedReader().readText())
+                val inline = resp.getJSONArray("candidates").getJSONObject(0).getJSONObject("content")
+                    .getJSONArray("parts").getJSONObject(0).getJSONObject("inlineData")
+                val pcm = Base64.decode(inline.getString("data"), Base64.DEFAULT)
+                val rate = Regex("rate=(\\d+)").find(inline.optString("mimeType"))?.groupValues?.get(1)?.toIntOrNull() ?: 24000
+                if (pcm.isNotEmpty()) return pcm to rate
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
 
     /** Quick check of key, network and model name. Blocking: run off the main thread. */
     fun diagnose(): String {

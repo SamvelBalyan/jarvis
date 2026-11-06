@@ -78,6 +78,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
             "• set alarm for 7:30 am called gym\n" +
             "• remind me to <thing> tomorrow at 5 pm\n" +
             "• call <contact> • play <song> • navigate to <place>\n" +
+            "• turn on pc and put far cry 5 (any game in Desktop/Games)\n" +
             "• turn on pc • put pc to sleep • lock pc • is pc online\n" +
             "• flashlight on/off • volume up/down • battery • what time is it\n" +
             "• or any command you add in the Commands tab"
@@ -113,9 +114,16 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
     private fun clean(raw: String) =
         Parsers.normalizeSpeech(raw).replace(" dot ", ".").trim().trimEnd('.', '!', '?')
 
-    private fun runLine(raw: String, allowAi: Boolean = true) {
+    private fun runLine(raw: String, allowAi: Boolean = true, allowLive: Boolean = true) {
         val t = clean(raw)
         if (t.isEmpty()) return
+        if (allowLive && allowAi) {
+            val q = Live.parse(t)
+            if (q != null) {
+                liveAnswer(raw, q)
+                return
+            }
+        }
         if (allowAi && (t.startsWith("ask ") || t.startsWith("hey ") || t.startsWith("tell me "))) {
             if (Ai.enabled()) {
                 askAi(raw.trim().replace(Regex("^(ask|hey|tell me)\\s+", RegexOption.IGNORE_CASE), ""))
@@ -134,6 +142,23 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
             }
         } catch (e: Exception) {
             say("🎤 $raw\n⚠ ${e.message}")
+        }
+    }
+
+    // ---------------------------------------------------------------- live answers (money, weather, time zones)
+
+    private fun liveAnswer(raw: String, q: Live.Query) {
+        say("🎤 $raw\n→ …")
+        thread {
+            try {
+                val r = Live.answer(q)
+                say("🎤 $raw\n🤖 $r")
+                speak(r)
+            } catch (e: Exception) {
+                val m = "I couldn't get that right now. Check your internet."
+                say("🎤 $raw\n⚠ $m")
+                speak(m)
+            }
         }
     }
 
@@ -187,19 +212,72 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private var track: AudioTrack? = null
 
-    private fun speak(text: String) {
-        if (!Store.flag("speak")) return
+    private var speakGen = 0
+
+    /** Cuts off whatever Jarvis is saying. */
+    fun stopSpeaking() {
+        speakGen++
+        main.post {
+            track?.let {
+                try { it.stop() } catch (_: Exception) { }
+                try { it.release() } catch (_: Exception) { }
+            }
+            track = null
+            try { tts?.stop() } catch (_: Exception) { }
+        }
+    }
+
+    private fun speak(text: String) = speakWith(Voices.current(), text, false)
+
+    /** Keeps spoken answers under about 30 seconds (roughly 80 words). */
+    private fun capForSpeech(s: String): String {
+        val words = s.trim().split(Regex("\\s+"))
+        if (words.size <= 80) return s.trim()
+        val cut = words.take(80).joinToString(" ")
+        val end = maxOf(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'))
+        return if (end > cut.length / 2) cut.substring(0, end + 1) else cut
+    }
+
+    /** Speaks with the chosen voice. Order: Google voice (online) -> Piper offline -> phone voice. */
+    fun speakWith(voice: String, textIn: String, force: Boolean) {
+        if (!force && !Store.flag("speak")) return
+        val text = capForSpeech(textIn)
+        if (text.isEmpty()) return
+        val gen = ++speakGen
         thread {
-            // 1) Gemini natural voice (online)  2) Piper offline voice  3) phone voice
-            if (Store.flag("naturalvoice") && Ai.enabled()) {
-                val r = Ai.tts(text)
-                if (r != null) { main.post { playPcm(r.first, r.second) }; return@thread }
+            val kind = voice.substringBefore(":")
+            val name = voice.substringAfter(":", "")
+            if (kind == "gemini" && Ai.enabled()) {
+                val r = Ai.tts(text, name.ifEmpty { "Charon" })
+                if (r != null) {
+                    if (gen == speakGen) main.post { playPcm(r.first, r.second, Voices.speed()) }
+                    return@thread
+                }
             }
-            if (Store.flag("piper")) {
-                val r = PiperTts.speak(ctx, text)
-                if (r != null) { main.post { playPcm(r.first, r.second) }; return@thread }
+            if (kind == "gemini" || kind == "piper") {
+                val id = if (kind == "piper" && Voices.downloaded(ctx, name)) name else Voices.BUILTIN
+                val r = PiperTts.speak(ctx, text, id)
+                if (r != null) {
+                    if (gen == speakGen) main.post { playPcm(r.first, r.second, 1f) }
+                    return@thread
+                }
             }
-            main.post { localSpeak(text) }
+            if (gen == speakGen) main.post { localSpeak(text) }
+        }
+    }
+
+    fun previewVoice(voice: String) = speakWith(voice, Voices.SAMPLE, true)
+
+    fun downloadVoice(id: String) {
+        if (Store.downloading.containsKey(id)) return
+        main.post { Store.downloading[id] = 0 }
+        thread {
+            val ok = Voices.download(ctx, id) { p -> main.post { Store.downloading[id] = p } }
+            main.post {
+                Store.downloading.remove(id)
+                Store.voiceTick.value = Store.voiceTick.value + 1
+            }
+            say(if (ok) "✅ Voice downloaded. Tap ▶ to hear it." else "⚠ Voice download failed. Check your internet and try again.")
         }
     }
 
@@ -220,7 +298,7 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         return buf + ByteArray((rate * 0.2).toInt() * 2)
     }
 
-    private fun playPcm(raw: ByteArray, rate: Int) {
+    private fun playPcm(raw: ByteArray, rate: Int, speed: Float = 1f) {
         val pcm = cleanTail(raw, rate)
         try {
             track?.let {
@@ -245,12 +323,15 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
             t.write(pcm, 0, pcm.size)
+            if (speed != 1f) {
+                try { t.playbackParams = android.media.PlaybackParams().setSpeed(speed) } catch (_: Exception) { }
+            }
             t.play()
             track = t
             main.postDelayed({
                 try { t.release() } catch (_: Exception) { }
                 if (track === t) track = null
-            }, pcm.size / 2L * 1000L / rate + 800L)
+            }, (pcm.size / 2L * 1000L / rate / speed).toLong() + 800L)
         } catch (e: Exception) {
             // never let a sound problem break a command
         }
@@ -271,11 +352,13 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                         if (pick != null) tts?.setVoice(pick)
                     } catch (_: Exception) {
                     }
+                    tts?.setSpeechRate(Voices.speed())
                     pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "jarvis") }
                     pendingSpeech = null
                 }
             }
         } else if (ttsReady) {
+            tts?.setSpeechRate(Voices.speed())
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
         }
     }
@@ -285,6 +368,9 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
         val pcWord = Regex("\\b(pc|computer|laptop)\\b")
         val wake = Regex("(wake|turn on|power on|boot|start up).*\\b(pc|computer|laptop)\\b")
         if (wake.containsMatchIn(t)) {
+            // "turn on pc and put far cry 5" -> wake, wait until it's up, then open the game/app
+            val then = Regex("\\b(?:and|then)\\s+(?:put on|put|play|open|launch|start|run)\\s+(.+)$").find(t)
+            if (then != null) return wakeThenOpen(then.groupValues[1])
             wakePc()
             return "Sending wake signal to the PC…"
         }
@@ -296,15 +382,21 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
 
     private fun builtin(t: String): String? {
         if (t == "help" || t == "what can you do" || t == "what can i say" || t == "commands") return helpText
+        if (t in setOf("stop", "quiet", "be quiet", "stop talking", "shut up", "enough", "silence", "ok stop", "okay stop")) {
+            stopSpeaking()
+            return "Okay."
+        }
         if (t.contains("what time") || t == "time") {
-            return "It's " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            return "It's " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()).also { speak("It's $it.") }
         }
         if (t.contains("what day") || t.contains("the date") || t.contains("today's date")) {
-            return SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date())
+            return SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date()).also { speak("It's $it.") }
         }
         if (t.contains("battery") && !Regex("\\b(pc|computer|laptop)\\b").containsMatchIn(t)) {
             val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-            return "Battery ${bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)}%"
+            val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            speak("Battery is at $pct percent.")
+            return "Battery $pct%"
         }
         if (Regex("\\b(flashlight|torch)\\b").containsMatchIn(t)) return torch(!t.contains(" off"))
         if (Regex("\\b(volume up|louder|turn it up)\\b").containsMatchIn(t)) return volume(AudioManager.ADJUST_RAISE)
@@ -447,6 +539,38 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                 if (announce) report(if (ok) "✅ PC is online" else "⚠ PC not reachable")
             }
         }
+    }
+
+    /** Wakes the PC if needed, waits for the agent (up to ~2 min), then opens an app or game. */
+    private fun wakeThenOpen(target: String): String {
+        val name = target.replace(Regex("\\b(on|the|my|game|pc|computer|laptop|please)\\b"), " ")
+            .replace(Regex("\\s+"), " ").trim()
+        if (name.isEmpty()) {
+            wakePc()
+            return "Sending wake signal to the PC…"
+        }
+        thread {
+            fun online() = try { postCommand("ping", null).optBoolean("ok") } catch (e: Exception) { false }
+            var up = online()
+            if (!up) {
+                try { wakePc() } catch (e: Exception) { say("⚠ ${e.message}"); return@thread }
+                for (i in 1..24) {
+                    Thread.sleep(5000)
+                    if (online()) { up = true; break }
+                    if (i % 4 == 0) try { wakePc() } catch (_: Exception) { }
+                }
+            }
+            if (!up) { say("⚠ The PC didn't come online within 2 minutes."); return@thread }
+            main.post { Store.pcOnline.value = true }
+            Thread.sleep(6000) // let the desktop finish loading
+            try {
+                val r = postCommand("open_app", name)
+                say(if (r.optBoolean("ok")) "✅ PC: ${r.optString("result")}" else "⚠ PC: ${r.optString("error")}")
+            } catch (e: Exception) {
+                say("⚠ PC came online but I couldn't start $name (${e.message})")
+            }
+        }
+        return "Waking the PC, then I'll start $name…"
     }
 
     private fun wakePc() {

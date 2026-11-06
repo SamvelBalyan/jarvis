@@ -421,6 +421,8 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
     var aiKey by remember { mutableStateOf(Store.str("aikey")) }
     var aiModel by remember { mutableStateOf(Store.str("aimodel", "gemini-flash-latest")) }
     var speak by remember { mutableStateOf(Store.flag("speak")) }
+    var natural by remember { mutableStateOf(Store.flag("naturalvoice")) }
+    var voiceName by remember { mutableStateOf(Store.str("ttsvoice", "Charon")) }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -522,6 +524,13 @@ fun SettingsScreen(brain: Brain, actions: UiActions) {
                 Store.putFlag("speak", it)
             }
         }
+        item {
+            ToggleRow("Natural AI voice", "Smoother voice from Google (needs internet); falls back to the phone's voice", natural) {
+                natural = it
+                Store.putFlag("naturalvoice", it)
+            }
+        }
+        item { SettingField("Voice name (Charon, Orus, Fenrir, Puck, Kore…)", voiceName) { voiceName = it; Store.putStr("ttsvoice", it) } }
         item {
             OutlinedButton(onClick = { brain.testAi() }) { Text("Test AI") }
         }

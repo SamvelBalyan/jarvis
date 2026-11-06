@@ -246,7 +246,7 @@ fun HomeScreen(brain: Brain, actions: UiActions) {
                 Column(Modifier.weight(1f)) {
                     Text("Hey Jarvis", color = J.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (Store.wakeRunning.value) "Listening. Say “Jarvis”, wait for the chime, then your command."
+                        if (Store.wakeRunning.value) "Listening. Say “Hey Jarvis”, wait for the chime, then your command."
                         else "Off. Switch on to talk hands-free.",
                         color = J.dim, fontSize = 13.sp
                     )

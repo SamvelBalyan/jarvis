@@ -190,7 +190,18 @@ class Brain(private val ctx: Context, private val report: (String) -> Unit) {
                 tts = TextToSpeech(ctx.applicationContext) { status ->
                     if (status == TextToSpeech.SUCCESS) {
                         ttsReady = true
-                        tts?.setLanguage(Locale.US)
+                        // A calm British male voice if the phone has one (Google voices "gbb"/"gbd").
+                        tts?.setLanguage(Locale.UK)
+                        try {
+                            val all = tts?.voices?.toList() ?: emptyList()
+                            val uk = all.filter { it.locale == Locale.UK && !it.isNetworkConnectionRequired }
+                            val male = uk.firstOrNull { it.name.contains("gbd") || it.name.contains("gbb") }
+                            val pick = male ?: uk.firstOrNull()
+                            if (pick != null) tts?.setVoice(pick)
+                        } catch (_: Exception) {
+                        }
+                        tts?.setPitch(0.88f)
+                        tts?.setSpeechRate(0.97f)
                         pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "jarvis") }
                         pendingSpeech = null
                     }

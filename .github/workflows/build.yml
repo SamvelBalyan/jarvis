@@ -31,11 +31,17 @@ jobs:
           mv vosk-model-small-en-us-0.15 app/src/main/assets/model-en-us
           cat /proc/sys/kernel/random/uuid > app/src/main/assets/model-en-us/uuid
 
-      - name: Check wake word is in the voice model
+      - name: Permanent signing key (created once, so updates install over old versions)
         run: |
-          echo "--- wake word candidates in model vocabulary:"
-          grep -n -i -w -E "jarvis|travis|jarvas|gervais|jarvie" app/src/main/assets/model-en-us/graph/words.txt || echo "NONE FOUND"
-          echo "--- model files:"; ls app/src/main/assets/model-en-us app/src/main/assets/model-en-us/graph
+          if [ ! -f app/jarvis-debug.keystore ]; then
+            keytool -genkeypair -keystore app/jarvis-debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Jarvis,O=Personal,C=AM"
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add app/jarvis-debug.keystore
+            git commit -m "Add personal signing key [skip ci]"
+            git push
+          fi
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon

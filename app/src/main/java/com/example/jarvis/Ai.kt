@@ -106,10 +106,7 @@ Never invent other command forms. Several commands may be combined when the user
                             JSONObject().put(
                                 "parts",
                                 JSONArray().put(
-                                    JSONObject().put(
-                                        "text",
-                                        "Say in a calm, refined British male voice at a natural pace: " + text.take(400)
-                                    )
+                                    JSONObject().put("text", text.take(400))
                                 )
                             )
                         )

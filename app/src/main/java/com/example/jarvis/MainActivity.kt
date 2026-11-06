@@ -31,6 +31,8 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.concurrent.thread
 
+class NoSuchAppException(message: String) : Exception(message)
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var log: TextView
@@ -174,16 +176,16 @@ class MainActivity : AppCompatActivity() {
             c.contains("shut down") || c.contains("shutdown") || c.contains("turn off") ||
                 c.contains("power off") -> send("shutdown")
             c.startsWith("search ") -> send("search", c.removePrefix("search ").removePrefix("for ").trim())
-            c.startsWith("open ") || c.startsWith("launch ") || c.startsWith("start ") -> {
-                val target = c.substringAfter(" ").trim()
-                when {
-                    target.contains(".") -> send("open_url", target.replace(" ", ""))
-                    sites.containsKey(target) -> send("open_url", sites[target])
-                    else -> send("open_app", target)
-                }
-            }
+            c.startsWith("open ") || c.startsWith("launch ") || c.startsWith("start ") ->
+                openOnPc(c.substringAfter(" ").trim())
             else -> throw Exception("Didn't understand that PC command")
         }
+    }
+
+    private fun openOnPc(target: String): String = when {
+        target.contains(".") -> send("open_url", target.replace(" ", ""))
+        sites.containsKey(target) -> send("open_url", sites[target])
+        else -> send("open_app", target)
     }
 
     private fun send(action: String, arg: String? = null): String {
@@ -240,8 +242,14 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- phone commands
 
     private fun phoneCommand(t: String): String = when {
-        t.startsWith("open ") || t.startsWith("launch ") || t.startsWith("start ") ->
-            openApp(t.substringAfter(" ").trim())
+        t.startsWith("open ") || t.startsWith("launch ") || t.startsWith("start ") -> {
+            val name = t.substringAfter(" ").trim()
+            try {
+                openApp(name)
+            } catch (e: NoSuchAppException) {
+                "Not on phone, trying PC. " + openOnPc(name) // e.g. games, AnyDesk
+            }
+        }
         t.contains("alarm") || t.contains("wake me") -> setAlarm(t)
         t.contains("timer") -> setTimer(t)
         t.startsWith("call ") || t.startsWith("phone ") -> call(t.substringAfter(" ").trim())
@@ -313,7 +321,7 @@ class MainActivity : AppCompatActivity() {
         val idx = apps.indices.firstOrNull { label(it) == name }
             ?: apps.indices.firstOrNull { label(it).startsWith(name) }
             ?: apps.indices.firstOrNull { label(it).contains(name) }
-            ?: throw Exception("No installed app called \"$name\"")
+            ?: throw NoSuchAppException("No installed app called \"$name\"")
         val intent = pm.getLaunchIntentForPackage(apps[idx].activityInfo.packageName)
             ?: throw Exception("Can't launch that app")
         startActivity(intent)
